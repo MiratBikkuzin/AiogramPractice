@@ -1,9 +1,27 @@
-from config import BOT_TOKEN
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
+from config import BOT_TOKEN, db_host, db_name, db_password, db_user, db_port
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 from random import randint
-import re
+import re, pymysql
+
+
+try:
+
+    CONNECTION: pymysql.Connection = pymysql.connect(
+        host=db_host,
+        user=db_user,
+        password=db_password,
+        database=db_name,
+        port=db_port,
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True
+    )
+    print('Connection is successfull')
+
+except Exception as error:
+    print('Connection refused')
+    print(error)
 
 
 ATTEMPTS: int = 8  # Попытки доступные пользователю в одной игре
@@ -14,19 +32,34 @@ dp: Dispatcher = Dispatcher()
 users: dict = {}
 
 
+def execute_query(query: str, main_command: str) -> list[dict] | None:
+    with CONNECTION:
+        with CONNECTION.cursor() as cursor:
+            command = cursor.execute
+            if main_command == 'select':
+                command = cursor.fetchall
+            return command(query)
+
+
 def get_random_number() -> int:
     return randint(1, 100)
 
 
-@dp.message(Command(commands=('start')))
+@dp.message(CommandStart())
 async def process_start_command(message: Message):
 
-    users[message.from_user.id]: dict = {
+    user_id: str = str(message.from_user.id)
+    username: str = message.from_user.username
+
+    add_user_query: str = "INSERT INTO users_info (user_id, username, total_games, wins)" \
+                        f"VALUES ({user_id}, {username}, 0, 0)"
+    execute_query(add_user_query, 'insert')
+
+    users[user_id]: dict = {
         'in_game': False,
         'secret_number': None,
-        'attempts': None,
-        'total_games': 0,
-        'wins': 0}
+        'attempts': None
+    }
 
     await message.answer('Здравствуйте уважаемый! Предлагаю вам сыграть со мной в игру "Угадай число". Прочитайте подробные правила нажав сюда /help. А если вы уже знаете правила, то готовы ли вы сыграть со мной в игру "Да/Нет"')
 
@@ -40,10 +73,15 @@ async def process_help_command(message: Message):
 async def process_stat_command(message: Message):
 
     user_id: int = message.from_user.id
+    
+    select_user_info_query: str = "SELECT total_games, wins" \
+                                "FROM users_info" \
+                                f"WHERE ({user_id}, {message.from_user.username}) = (user_id, username)"
+    total_games, wins = tuple(execute_query(select_user_info_query, 'select')[0].values())
 
-    await message.answer(f"Игрок {message.from_user.first_name}\n \
-Всего сыграно игр: {users[user_id]['total_games']}\n \
-Всего выиграно игр: {users[user_id]['wins']}")
+    await message.answer(f"Игрок {message.from_user.username}\n" \
+                        f"Всего сыграно игр: {total_games}\n" \
+                        f"Всего выиграно игр: {wins}")
     
 
 @dp.message(Command(commands=('cancel')))
@@ -63,15 +101,19 @@ async def process_stat_command(message: Message):
 async def process_numbers_answer(message: Message):
 
     user_id: int = message.from_user.id
+    username: str = message.from_user.username
     mess_text: str = message.text
 
     if users[user_id]['in_game']:
 
         if int(mess_text) == users[user_id]['secret_number']:
+
+            update_user_info_query: str = "UPDATE users_info" \
+                                        "SET total_games = total_games + 1, wins = wins + 1" \
+                                        f"WHERE ({user_id}, {username}) = (user_id, username)"
+            execute_query(update_user_info_query, 'update')
             
             users[user_id]['in_game']: bool = False
-            users[user_id]['total_games'] += 1
-            users[user_id]['wins'] += 1
 
             await message.answer(f'Поздравляееем!!!! Вы угадали число!!! Загаданное число было {mess_text}')
 
@@ -84,12 +126,14 @@ async def process_numbers_answer(message: Message):
 
             if users[user_id]['attempts'] == 0:
 
+                update_user_info_query: str = "UPDATE users_info" \
+                                            "SET total_games = total_games + 1" \
+                                            f"WHERE ({user_id}, {username}) = (user_id, usernmae)"
+                execute_query(update_user_info_query, 'update')
+
                 users[user_id]['in_game']: bool = False
-                users[user_id]['total_games'] += 1
 
                 await message.answer(f'К сожалению, у вас больше не осталось попыток. Вы проиграли. Загаданное число было {user_secret_number}. Попробуйте сыграть ещё раз, может повезёт!')
-
-        print(users[user_id])
 
     else:
         await message.answer('Мы ещё не играем. Куда числа отправляете молодой. Хотите сыграть?')
@@ -122,40 +166,6 @@ async def process_positive_answer(message: Message):
         users[user_id]['attempts']: int = ATTEMPTS
 
         await message.answer('Ура! Я загадал число от 1 до 100, попробуй отгадать! У тебя всего 8 попыток')
-
-
-@dp.message(lambda x: isinstance(x.text, int) and 1 <= int(x.text) <= 100)
-async def process_numbers_answer(message: Message):
-
-    user_id: int = message.from_user.id
-    mess_text: str = message.text
-
-    if users[user_id]['in_game']:
-
-        if int(mess_text) == users[user_id]['secret_number']:
-            
-            users[user_id]['in_game']: bool = False
-            users[user_id]['total_games'] += 1
-            users[user_id]['wins'] += 1
-
-            await message.answer(f'Поздравляееем!!!! Вы угадали число!!! Загаданное число было {mess_text}')
-
-        else:
-
-            user_secret_number: int = users[user_id]['secret_number']
-            users[user_id]['attempts'] -= 1
-
-            await message.answer(f"К сожалению, вы не угадали. Загаданное число {('больше', 'меньше')[int(mess_text) < user_secret_number]}")
-
-            if users[user_id]['attempts'] == 0:
-
-                users[user_id]['in_game']: bool = False
-                users[user_id]['total_games'] += 1
-
-                await message.answer(f'К сожалению, у вас больше не осталось попыток. Вы проиграли. Загаданное число было {user_secret_number}. Попробуйте сыграть ещё раз, может повезёт!')
-
-    else:
-        await message.answer('Мы ещё не играем. Куда числа отправляете молодой. Хотите сыграть?')
 
 
 @dp.message()
