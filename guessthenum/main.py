@@ -11,7 +11,6 @@ users: dict = {}
 
 with CONNECTION:
 
-
     def execute_query(query: str, main_command: str) -> tuple[dict] | None:
         with CONNECTION.cursor() as cursor:
             cursor.execute(query)
