@@ -1,4 +1,11 @@
-from imports import *
+from config import BOT_TOKEN
+from for_db.db_data import CONNECTION
+from for_db.db_queries import *
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command, CommandStart
+from aiogram.types import Message
+from random import randint
+import re
 
 
 ATTEMPTS: int = 8  # Попытки доступные пользователю в одной игре
@@ -9,35 +16,38 @@ dp: Dispatcher = Dispatcher()
 users: dict = {}
 
 
+def get_random_number() -> int:
+    return randint(1, 100)
+
+
 with CONNECTION:
 
-    def execute_query(query: str, main_command: str) -> tuple[dict] | None:
+    def execute_query(query: str, main_command: str) -> dict | None:
         with CONNECTION.cursor() as cursor:
             cursor.execute(query)
             if main_command.lower() == 'select':
-                return cursor.fetchall()
-
-
-    def get_random_number() -> int:
-        return randint(1, 100)
+                return cursor.fetchone()
 
 
     @dp.message(CommandStart())
     async def process_start_command(message: Message):
 
         user_id: int = message.from_user.id
+        first_name: int = message.from_user.first_name
         username: str | None = message.from_user.username
-        
-        if not execute_query(check_user_query % user_id, 'select'):
-            execute_query(add_user_query % (user_id, username, 0, 0), 'insert')
 
         users[user_id]: dict = {
             'in_game': False,
             'secret_number': None,
             'attempts': None
         }
+        
+        if not execute_query(check_user_query % user_id, 'select'):
+            execute_query(add_user_query % (user_id, username, 0, 0, 0), 'insert')
+            await message.answer(f'Здравствуйте {first_name}! Я знаю, что вы новенький и предлагаю вам сыграть со мной в игру "Угадай число". Возможно, вы не знаете правила, так как вы новенький. Поэтому нажмите сюда, чтобы узнать правила /help. А если вы уже знаете правила, то готовы ли вы сыграть со мной в игру?')
 
-        await message.answer('Здравствуйте уважаемый! Предлагаю вам сыграть со мной в игру "Угадай число". Прочитайте подробные правила нажав сюда /help. А если вы уже знаете правила, то готовы ли вы сыграть со мной в игру "Да/Нет"')
+        else:
+            await message.answer(f'Здравствуйте {first_name}! Я вас помню, вы уже играли со мной в игру, поэтому правила вам объяснять не нужно. Ну чтож, сыграем в игру как в былые 90-е?')
 
 
     @dp.message(Command(commands=('help')))
@@ -50,11 +60,12 @@ with CONNECTION:
 
         user_id: int = message.from_user.id
         
-        total_games, wins = tuple(execute_query(select_user_info_query % user_id, 'select')[0].values())
+        total_games, wins, total_score = tuple(execute_query(select_user_info_query % user_id, 'select').values())
 
         await message.answer(f"Статистика игрока {message.from_user.first_name}; username: {message.from_user.username}\n" \
                             f"Всего сыграно игр: {total_games}\n" \
-                            f"Всего выиграно игр: {wins}")
+                            f"Всего выиграно игр: {wins}\n" \
+                            f"Всего заработано очков: {total_score}")
         
 
     @dp.message(Command(commands=('cancel')))
@@ -78,24 +89,31 @@ with CONNECTION:
 
         if users[user_id]['in_game']:
 
+            users[user_id]['attempts'] -= 1
+
             if int(mess_text) == users[user_id]['secret_number']:
 
-                execute_query(update_user_info_query % (1, user_id), 'update')
+                user_attempts: int = users[user_id]['attempts']
+                number_attempts: int = ATTEMPTS - user_attempts
+                remaining_attempts: int = user_attempts if user_attempts > 0 else 1
+                score: int = remaining_attempts * 100
+                right_word: str = 'попытку' if number_attempts == 1 else ('попытки', 'попыток')[number_attempts > 4]
+
+                execute_query(update_user_info_query % (1, score, user_id), 'update')
                 
                 users[user_id]['in_game']: bool = False
 
-                await message.answer(f'Поздравляееем!!!! Вы угадали число!!! Загаданное число было {mess_text}')
+                await message.answer(f'Поздравляееем!!!! Вы угадали число за {number_attempts} {right_word}, вы получаете {score} очков! Загаданное число было {mess_text}. Сыграем ещё раз?')
 
             else:
 
                 user_secret_number: int = users[user_id]['secret_number']
-                users[user_id]['attempts'] -= 1
 
                 await message.answer(f"К сожалению, вы не угадали. Загаданное число {('больше', 'меньше')[int(mess_text) > user_secret_number]}")
 
                 if users[user_id]['attempts'] == 0:
 
-                    execute_query(update_user_info_query % (0, user_id), 'update')
+                    execute_query(update_user_info_query % (0, 0, user_id), 'update')
 
                     users[user_id]['in_game']: bool = False
 
@@ -105,7 +123,7 @@ with CONNECTION:
             await message.answer('Мы ещё не играем. Куда числа отправляете молодой. Хотите сыграть?')
 
 
-    @dp.message(lambda x: isinstance(x.text, str) and re.search(r'в другой раз|потом|не|позже|nope|no', x.text.lower()))
+    @dp.message(lambda x: x.text and re.search(r'в другой раз|по(том|зже)|не|no', x.text.lower()))
     async def process_negative_answer(message: Message):
 
         user_id: int = message.from_user.id
@@ -117,7 +135,7 @@ with CONNECTION:
             await message.answer('Жаль, если захотите поиграть - просто напишите об этом')
 
 
-    @dp.message(lambda x: isinstance(x.text, str) and re.search(r'да|хочу|давай|сыграем|го|можно|yes|go', x.text.lower()))
+    @dp.message(lambda x: x.text and re.search(r'play|да|хочу|сыграем|го|можно|yes|go', x.text.lower()))
     async def process_positive_answer(message: Message):
         
         user_id: int = message.from_user.id
@@ -131,7 +149,7 @@ with CONNECTION:
             users[user_id]['secret_number']: int = get_random_number()
             users[user_id]['attempts']: int = ATTEMPTS
 
-            await message.answer('Ура! Я загадал число от 1 до 100, попробуй отгадать! У тебя всего 8 попыток')
+            await message.answer(F'Ура! Я загадал число от 1 до 100, попробуй отгадать! У тебя всего {ATTEMPTS} попыток')
 
 
     @dp.message()
@@ -142,7 +160,6 @@ with CONNECTION:
 
         else:
             await message.answer('Моя твоя не понимать! Давай просто сыграем в игру!!!')
-
 
     if __name__ == '__main__':
         dp.run_polling(bot)
