@@ -1,28 +1,4 @@
-from config import BOT_TOKEN, db_host, db_name, db_password, db_user, db_port
-from db_queries import check_user_query, select_user_info_query, update_user_info_query, add_user_query
-from aiogram import Bot, Dispatcher
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
-from random import randint
-import re, pymysql
-
-
-try:
-
-    CONNECTION: pymysql.Connection = pymysql.connect(
-        host=db_host,
-        user=db_user,
-        password=db_password,
-        database=db_name,
-        port=db_port,
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True
-    )
-    print('Connection is successfull')
-
-except Exception as error:
-    print('Connection refused')
-    print(error)
+from imports import *
 
 
 ATTEMPTS: int = 8  # Попытки доступные пользователю в одной игре
