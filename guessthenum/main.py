@@ -1,5 +1,6 @@
 from config import BOT_TOKEN
 from for_db.db_data import host, user, port, password, database
+from emojize import winner_cup_emo, game_emo, score_emo, win_rate_emo
 from for_db.db_queries import *
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandStart
@@ -41,8 +42,8 @@ async def process_start_command(message: Message):
         'attempts': None
         }
         
-    if not await execute_query(check_user_query % user_id, 'select'):
-        await execute_query(add_user_query % (user_id, username, 0, 0, 0), 'insert')
+    if not await execute_query(select_user_info_query % user_id, 'select'):
+        await execute_query(add_user_query % (user_id, username, 0, 0, 0, 0), 'insert')
         await message.answer(f'Здравствуйте {first_name}! Я знаю, что вы новенький и предлагаю вам сыграть со мной в игру "Угадай число". Возможно, вы не знаете правила, так как вы новенький. Поэтому нажмите сюда, чтобы узнать правила /help. А если вы уже знаете правила, то готовы ли вы сыграть со мной в игру?')
 
     else:
@@ -59,12 +60,13 @@ async def process_stat_command(message: Message):
 
     user_id: int = message.from_user.id
         
-    total_games, wins, total_score = await execute_query(select_user_info_query % user_id, 'select')
+    total_games, wins, total_score, win_rate = await execute_query(select_user_info_query % user_id, 'select')
 
-    await message.answer(f"Статистика игрока {message.from_user.first_name}; username: {message.from_user.username}\n" \
-                        f"Всего сыграно игр: {total_games}\n" \
-                        f"Всего выиграно игр: {wins}\n" \
-                        f"Всего заработано очков: {total_score}")
+    await message.answer(f"Статистика игрока {message.from_user.full_name}\n\n" \
+                        f"{game_emo} Всего сыграно игр: {total_games} {game_emo}\n\n" \
+                        f"{winner_cup_emo} Всего выиграно игр: {wins} {winner_cup_emo}\n\n" \
+                        f"{score_emo} Всего заработано очков: {total_score} {score_emo}\n\n" \
+                        f"{win_rate_emo} Процент побед: {win_rate} {win_rate_emo}")
         
 
 @dp.message(Command(commands=('cancel')))
@@ -92,13 +94,16 @@ async def process_numbers_answer(message: Message):
 
         if int(mess_text) == users[user_id]['secret_number']:
 
+            total_games, wins, *_ = await execute_query(select_user_info_query % user_id, 'select')
+            win_rate: str = str(int(round(((wins + 1) / (total_games + 1)) * 100)))
+
             user_attempts: int = users[user_id]['attempts']
             number_attempts: int = ATTEMPTS - user_attempts
             remaining_attempts: int = user_attempts if user_attempts > 0 else 1
             score: int = remaining_attempts * 100
             right_word: str = 'попытку' if number_attempts == 1 else ('попытки', 'попыток')[number_attempts > 4]
 
-            await execute_query(update_user_info_query % (1, score, user_id), 'update')
+            await execute_query(update_user_info_query % (1, score, '100%' if win_rate == '0' else win_rate + '%', user_id), 'update')
                 
             users[user_id]['in_game']: bool = False
 
@@ -112,7 +117,10 @@ async def process_numbers_answer(message: Message):
 
             if users[user_id]['attempts'] == 0:
 
-                await execute_query(update_user_info_query % (0, 0, user_id), 'update')
+                total_games, wins, *_ = await execute_query(select_user_info_query % user_id, 'select')
+                win_rate: str = str(int(round((wins / (total_games + 1)) * 100)))
+
+                await execute_query(update_user_info_query % (0, 0, '100%' if win_rate == '0' else win_rate + '%', user_id), 'update')
 
                 users[user_id]['in_game']: bool = False
 
