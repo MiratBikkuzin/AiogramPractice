@@ -2,9 +2,9 @@ from config import BOT_TOKEN
 from for_db.db_data import host, user, port, password, database
 from emojize import winner_cup_emo, game_emo, score_emo, win_rate_emo
 from for_db.db_queries import *
-from aiogram import Bot, Dispatcher
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart, ChatMemberUpdatedFilter, KICKED, MEMBER
+from aiogram.types import Message, ChatMemberUpdated
 from random import randint
 from aiomysql import Pool
 import re, asyncio, aiomysql
@@ -43,7 +43,7 @@ async def process_start_command(message: Message):
         }
         
     if not await execute_query(select_user_info_query % user_id, 'select'):
-        await execute_query(add_user_query % (user_id, username, 0, 0, 0, 0), 'insert')
+        await execute_query(add_user_query % (user_id, username, first_name, 0, 0, 0, 0, 'Active'), 'insert')
         await message.answer(f'Здравствуйте {first_name}! Я знаю, что вы новенький и предлагаю вам сыграть со мной в игру "Угадай число". Возможно, вы не знаете правила, так как вы новенький. Поэтому нажмите сюда, чтобы узнать правила /help. А если вы уже знаете правила, то готовы ли вы сыграть со мной в игру?')
 
     else:
@@ -82,7 +82,7 @@ async def process_stat_command(message: Message):
         await message.answer('А мы и так с вами не играем. Может, сыграем?')
 
 
-@dp.message(lambda x: x.text.isdigit() and 1 <= int(x.text) <= 100)
+@dp.message(F.text.isdigit(), lambda x: 1 <= int(x.text) <= 100)
 async def process_numbers_answer(message: Message):
 
     user_id: int = message.from_user.id
@@ -103,7 +103,7 @@ async def process_numbers_answer(message: Message):
             score: int = remaining_attempts * 100
             right_word: str = 'попытку' if number_attempts == 1 else ('попытки', 'попыток')[number_attempts > 4]
 
-            await execute_query(update_user_info_query % (1, score, '100%' if win_rate == '0' else win_rate + '%', user_id), 'update')
+            await execute_query(update_user_info_query % (1, score, win_rate + '%', user_id), 'update')
                 
             users[user_id]['in_game']: bool = False
 
@@ -120,7 +120,7 @@ async def process_numbers_answer(message: Message):
                 total_games, wins, *_ = await execute_query(select_user_info_query % user_id, 'select')
                 win_rate: str = str(int(round((wins / (total_games + 1)) * 100)))
 
-                await execute_query(update_user_info_query % (0, 0, '100%' if win_rate == '0' else win_rate + '%', user_id), 'update')
+                await execute_query(update_user_info_query % (0, 0, win_rate + '%', user_id), 'update')
 
                 users[user_id]['in_game']: bool = False
 
@@ -130,7 +130,7 @@ async def process_numbers_answer(message: Message):
         await message.answer('Мы ещё не играем. Куда числа отправляете молодой. Хотите сыграть?')
 
 
-@dp.message(lambda x: x.text and re.search(r'в другой раз|по(том|зже)|не|no', x.text.lower()))
+@dp.message(F.text, lambda x: re.search(r'в другой раз|по(том|зже)|не|no', x.text.lower()))
 async def process_negative_answer(message: Message):
 
     user_id: int = message.from_user.id
@@ -142,7 +142,8 @@ async def process_negative_answer(message: Message):
         await message.answer('Жаль, если захотите поиграть - просто напишите об этом')
 
 
-@dp.message(lambda x: x.text and re.search(r'play|да|хочу|сыграем|го|можно|yes|go', x.text.lower()))
+@dp.message(Command(commands=('play')))
+@dp.message(F.text, lambda x: re.search(r'да|хочу|сыграем|го|можно|yes|go', x.text.lower()))
 async def process_positive_answer(message: Message):
         
     user_id: int = message.from_user.id
@@ -159,7 +160,7 @@ async def process_positive_answer(message: Message):
         await message.answer(F'Ура! Я загадал число от 1 до 100, попробуй отгадать! У тебя всего {ATTEMPTS} попыток')
 
 
-@dp.message()
+@dp.message(F.text)
 async def process_other_answers(message: Message):
 
     if users[message.from_user.id]['in_game']:
@@ -167,6 +168,17 @@ async def process_other_answers(message: Message):
 
     else:
         await message.answer('Моя твоя не понимать! Давай просто сыграем в игру!!!')
+
+
+@dp.my_chat_member(ChatMemberUpdatedFilter(KICKED))
+async def process_user_blocked_bot(event: ChatMemberUpdated):
+    await execute_query(rename_status_user_query % ('Inactive', event.from_user.id), 'update')
+
+
+@dp.my_chat_member(ChatMemberUpdatedFilter(MEMBER))
+async def process_user_unblocked_bot(event: ChatMemberUpdated):
+    await execute_query(rename_status_user_query % ('Active', event.from_user.id), 'update')
+    await event.answer('Я рад видеть тебя снова!')
 
 
 async def main(loop) -> None:
