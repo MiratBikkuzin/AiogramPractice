@@ -1,6 +1,6 @@
 from config import BOT_TOKEN
 from for_db.db_data import host, user, port, password, database
-from emojize import winner_cup_emo, game_emo, score_emo, win_rate_emo
+from emojize import winner_cup_emo, game_emo, score_emo, win_rate_emo, user_places_emo
 from for_db.db_queries import *
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart, ChatMemberUpdatedFilter, KICKED, MEMBER
@@ -67,6 +67,12 @@ async def process_stat_command(message: Message):
                         f"{winner_cup_emo} Всего выиграно игр: {wins} {winner_cup_emo}\n\n" \
                         f"{score_emo} Всего заработано очков: {total_score} {score_emo}\n\n" \
                         f"{win_rate_emo} Процент побед: {win_rate} {win_rate_emo}")
+    
+
+@dp.message(Command(commands=('myplace')))
+async def process_user_place_command(message: Message):
+    user_place: int = int((await execute_query(select_user_place % message.from_user.id, 'select'))[0])
+    await message.answer(f'{user_places_emo} Ваша позиция среди других пользователей: {user_place} {user_places_emo}')
         
 
 @dp.message(Command(commands=('cancel')))

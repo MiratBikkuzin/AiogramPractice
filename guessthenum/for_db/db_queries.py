@@ -22,3 +22,14 @@ rename_status_user_query: str = """
 UPDATE `users_info`
 SET `status_user` = '%s'
 WHERE `user_id` > 0 AND %s = `user_id`"""
+
+
+select_user_place: str = """
+SELECT `num`
+FROM (
+    SELECT row_number() over(ORDER BY `game_score` DESC, `win_rate` DESC) AS `num`, `user_id`
+    FROM `users_info`
+    ORDER BY `game_score` DESC, `win_rate` DESC
+    ) help_query
+WHERE %s = `user_id`
+"""
